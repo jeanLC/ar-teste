@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Lente AR</title>
+<style>
+/* Layout: câmera em tela cheia, cena 3D por cima, controles no rodapé respeitando a área segura do iPhone */
+:root{
+  --ink:#f3f6f4; --muted:#a9b6b0; --glass:rgba(16,22,20,.62); --line:rgba(255,255,255,.16);
+  --accent:#5fe3b0; --bg:#0b100e;
+  --sans:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Arial,sans-serif;
+  color-scheme:dark;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font-family:var(--sans);overflow:hidden;touch-action:none;-webkit-user-select:none;user-select:none}
+#cam{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;background:radial-gradient(120% 90% at 50% 30%,#22302b,#0b100e)}
+#gl{position:fixed;inset:0;width:100%;height:100%;display:block}
+.reticle{position:fixed;left:50%;top:50%;width:44px;height:44px;margin:-22px 0 0 -22px;border:2px solid var(--accent);border-radius:50%;pointer-events:none;opacity:.85}
+.reticle::after{content:"";position:absolute;left:50%;top:50%;width:6px;height:6px;margin:-3px 0 0 -3px;background:var(--accent);border-radius:50%}
+.top{position:fixed;top:0;left:0;right:0;padding:calc(env(safe-area-inset-top,0px) + 10px) max(16px,env(safe-area-inset-right,0px)) 10px max(16px,env(safe-area-inset-left,0px));display:flex;justify-content:space-between;align-items:center;gap:8px;pointer-events:none}
+.pill{background:var(--glass);border:1px solid var(--line);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-radius:999px;padding:6px 12px;font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums}
+.pill b{color:var(--ink);font-weight:600}
+.bar{position:fixed;left:0;right:0;bottom:0;padding:12px max(16px,env(safe-area-inset-right,0px)) calc(env(safe-area-inset-bottom,0px) + 14px) max(16px,env(safe-area-inset-left,0px));display:flex;gap:10px;justify-content:center;align-items:center;flex-wrap:wrap}
+button{font:600 15px var(--sans);color:var(--ink);background:var(--glass);border:1px solid var(--line);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-radius:14px;padding:12px 16px;min-height:46px}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button.primary{background:var(--accent);color:#06281b;border-color:transparent}
+.shapes{display:flex;gap:6px;background:var(--glass);border:1px solid var(--line);border-radius:16px;padding:4px;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
+.shapes button{background:transparent;border:0;padding:10px 12px;min-height:40px;font-weight:500;color:var(--muted)}
+.shapes button[aria-pressed="true"]{background:rgba(95,227,176,.18);color:var(--accent)}
+#intro{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;padding:24px max(16px,env(safe-area-inset-right,0px)) 24px max(16px,env(safe-area-inset-left,0px));background:rgba(8,12,10,.78);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);z-index:5}
+.card{max-width:360px;display:flex;flex-direction:column;gap:14px}
+.card h1{margin:0;font-size:30px;letter-spacing:-.02em;text-wrap:balance}
+.card p{margin:0;color:var(--muted);line-height:1.5;font-size:15px}
+.card ol{margin:0;padding-left:20px;color:var(--muted);line-height:1.6;font-size:14px}
+.err{color:#ffb4a2;font-size:14px;min-height:1em}
+[hidden]{display:none!important}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<video id="cam" playsinline muted autoplay></video>
+<canvas id="gl"></canvas>
+<div class="reticle" aria-hidden="true"></div>
+
+<div class="top">
+  <span class="pill" id="mode">Modo: <b>—</b></span>
+  <span class="pill">Objetos: <b id="count">0</b></span>
+</div>
+
+<div class="bar">
+  <div class="shapes" role="group" aria-label="Escolher objeto">
+    <button id="s-cube" aria-pressed="true">Cubo</button>
+    <button id="s-knot" aria-pressed="false">Nó</button>
+    <button id="s-ball" aria-pressed="false">Esfera</button>
+    <button id="s-tree" aria-pressed="false">Árvore</button>
+  </div>
+  <button id="place" class="primary">Colocar</button>
+  <button id="clear">Limpar</button>
+  <button id="recenter">Centralizar</button>
+</div>
+
+<div id="intro">
+  <div class="card">
+    <h1>Realidade aumentada no iPhone</h1>
+    <p>A câmera traseira abre ao fundo e o giroscópio mantém os objetos 3D fixos no ambiente enquanto você gira o celular.</p>
+    <ol>
+      <li>Toque em <b>Iniciar</b> e permita câmera e movimento.</li>
+      <li>Aponte o círculo verde e toque em <b>Colocar</b> (ou toque na tela).</li>
+      <li>Gire o corpo: os objetos ficam onde você deixou.</li>
+    </ol>
+    <button id="start" class="primary">Iniciar</button>
+    <div class="err" id="err"></div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const video = $('cam'), canvas = $('gl');
+
+  // ---------- Cena 3D ----------
+  const renderer = new THREE.WebGLRenderer({canvas, alpha:true, antialias:true});
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.setClearColor(0x000000, 0);
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(60, 1, 0.05, 100);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x334433, 0.9));
+  const sun = new THREE.DirectionalLight(0xffffff, 0.8); sun.position.set(2, 4, 1); scene.add(sun);
+
+  // "Mundo" que pode ser girado para recentralizar
+  const world = new THREE.Group(); scene.add(world);
+
+  function resize(){
+    const w = innerWidth, h = innerHeight;
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h;
+    // Campo de visão aproximado da câmera traseira do iPhone (lente 1x)
+    camera.fov = w > h ? 45 : 65;
+    camera.updateProjectionMatrix();
+  }
+  addEventListener('resize', resize); resize();
+
+  // ---------- Objetos ----------
+  const palette = [0x5fe3b0, 0xffb347, 0x7aa8ff, 0xff7a9c, 0xf2e86d];
+  let shape = 'cube', count = 0;
+  const placed = [];
+
+  function makeObject(kind){
+    const color = palette[count % palette.length];
+    const mat = new THREE.MeshStandardMaterial({color, roughness:.35, metalness:.15});
+    if (kind === 'knot') return new THREE.Mesh(new THREE.TorusKnotGeometry(.12, .04, 120, 16), mat);
+    if (kind === 'ball') return new THREE.Mesh(new THREE.SphereGeometry(.15, 40, 24), mat);
+    if (kind === 'tree'){
+      const g = new THREE.Group();
+      const trunk = new THREE.Mesh(new THREE.CylinderGeometry(.03,.04,.18,12), new THREE.MeshStandardMaterial({color:0x8a5a3b, roughness:.9}));
+      trunk.position.y = -.12;
+      const top = new THREE.Mesh(new THREE.ConeGeometry(.14,.3,16), new THREE.MeshStandardMaterial({color:0x3fbf6f, roughness:.6}));
+      top.position.y = .1;
+      g.add(trunk, top); return g;
+    }
+    return new THREE.Mesh(new THREE.BoxGeometry(.22,.22,.22), mat);
+  }
+
+  function place(){
+    const obj = makeObject(shape);
+    // 1,2 m à frente, na direção em que o celular aponta
+    const dir = new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion);
+    const pos = dir.multiplyScalar(1.2);
+    world.worldToLocal(pos);
+    obj.position.copy(pos);
+    obj.userData.spin = .4 + Math.random() * .6;
+    obj.scale.setScalar(.01);
+    obj.userData.born = performance.now();
+    world.add(obj); placed.push(obj);
+    count++; $('count').textContent = placed.length;
+    if (navigator.vibrate) navigator.vibrate(10);
+  }
+
+  // ---------- Orientação do aparelho → câmera ----------
+  const zee = new THREE.Vector3(0,0,1);
+  const euler = new THREE.Euler();
+  const q0 = new THREE.Quaternion();
+  const q1 = new THREE.Quaternion(-Math.sqrt(.5), 0, 0, Math.sqrt(.5)); // olhar pela traseira, não pelo topo
+  let orient = null, screenAngle = 0, usingGyro = false;
+
+  function screenOrientation(){
+    const a = (screen.orientation && screen.orientation.angle) ?? window.orientation ?? 0;
+    return THREE.MathUtils.degToRad(a);
+  }
+  addEventListener('orientationchange', () => { screenAngle = screenOrientation(); });
+  screenAngle = screenOrientation();
+
+  function onOrient(e){
+    if (e.alpha == null) return;
+    orient = e; usingGyro = true;
+  }
+  function applyGyro(){
+    if (!orient) return;
+    const d = THREE.MathUtils.degToRad;
+    euler.set(d(orient.beta), d(orient.alpha), -d(orient.gamma), 'YXZ');
+    camera.quaternion.setFromEuler(euler);
+    camera.quaternion.multiply(q1);
+    camera.quaternion.multiply(q0.setFromAxisAngle(zee, -screenAngle));
+  }
+
+  // Sem giroscópio (computador): arrastar para olhar
+  let yaw = 0, pitch = 0, dragging = false, moved = 0, lx = 0, ly = 0;
+  canvas.addEventListener('pointerdown', e => { dragging = true; moved = 0; lx = e.clientX; ly = e.clientY; });
+  addEventListener('pointermove', e => {
+    if (!dragging) return;
+    const dx = e.clientX - lx, dy = e.clientY - ly; lx = e.clientX; ly = e.clientY;
+    moved += Math.abs(dx) + Math.abs(dy);
+    if (!usingGyro){ yaw -= dx * .005; pitch = Math.max(-1.4, Math.min(1.4, pitch - dy * .005)); }
+  });
+  addEventListener('pointerup', () => { if (dragging && moved < 8 && $('intro').hidden) place(); dragging = false; });
+
+  function recenter(){
+    // gira o mundo para que "à frente" passe a ser para onde o celular aponta agora
+    const dir = new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion);
+    const heading = Math.atan2(-dir.x, -dir.z);
+    world.rotation.y = heading;
+    placed.forEach(o => { world.remove(o); }); placed.length = 0; $('count').textContent = 0;
+  }
+
+  // ---------- Loop ----------
+  const clock = new THREE.Clock();
+  function loop(){
+    const dt = clock.getDelta(), now = performance.now();
+    if (usingGyro) applyGyro(); else camera.quaternion.setFromEuler(new THREE.Euler(pitch, yaw, 0, 'YXZ'));
+    for (const o of placed){
+      o.rotation.y += o.userData.spin * dt;
+      const t = Math.min(1, (now - o.userData.born) / 350);
+      o.scale.setScalar(.01 + (1 - Math.pow(1 - t, 3)) * .99);
+    }
+    renderer.render(scene, camera);
+    requestAnimationFrame(loop);
+  }
+  loop();
+
+  // ---------- Início: câmera + sensores (precisa de toque no iOS) ----------
+  async function start(){
+    $('err').textContent = '';
+    let camOk = false, gyroOk = false;
+
+    // 1) Movimento (iOS 13+ exige pedido explícito)
+    try{
+      if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function'){
+        const r = await DeviceOrientationEvent.requestPermission();
+        gyroOk = r === 'granted';
+      } else gyroOk = 'DeviceOrientationEvent' in window;
+      if (gyroOk) addEventListener('deviceorientation', onOrient);
+    }catch(e){ gyroOk = false; }
+
+    // 2) Câmera traseira
+    try{
+      if (!window.isSecureContext) throw new Error('insecure');
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio:false,
+        video:{facingMode:{ideal:'environment'}, width:{ideal:1920}, height:{ideal:1080}}
+      });
+      video.srcObject = stream; await video.play(); camOk = true;
+    }catch(e){
+      $('err').textContent = e.message === 'insecure'
+        ? 'A câmera só abre em endereço https. Publique o arquivo (ex.: GitHub Pages) e abra pelo Safari.'
+        : 'Não consegui abrir a câmera. Verifique em Ajustes › Safari › Câmera.';
+    }
+
+    $('mode').innerHTML = 'Modo: <b>' + (camOk ? 'Câmera' : 'Sem câmera') + (gyroOk ? ' + giro' : ' · arraste') + '</b>';
+    if (camOk || !$('err').textContent) $('intro').hidden = true;
+    else setTimeout(() => { $('intro').hidden = true; }, 3500);
+  }
+
+  $('start').addEventListener('click', start);
+  $('place').addEventListener('click', e => { e.stopPropagation(); place(); });
+  $('clear').addEventListener('click', () => { placed.forEach(o => world.remove(o)); placed.length = 0; $('count').textContent = 0; });
+  $('recenter').addEventListener('click', recenter);
+  for (const k of ['cube','knot','ball','tree']){
+    $('s-' + k).addEventListener('click', () => {
+      shape = k;
+      document.querySelectorAll('.shapes button').forEach(b => b.setAttribute('aria-pressed', b.id === 's-' + k));
+    });
+  }
+})();
+</script>
+</body>
+</html>
